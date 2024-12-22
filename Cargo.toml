@@ -1,0 +1,15 @@
+[package]
+name = "rlnc_poc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+curve25519-dalek = "4.0.0"
+rand = "0.8"
+
+[dev-dependencies]
+criterion = "0.4"
+
+[[bench]]
+name = "block_benchmarks"
+harness = false

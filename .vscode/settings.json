@@ -1,0 +1,4 @@
+{
+    "editor.formatOnSave": true,
+    "rust-analyzer.rustfmt.extraArgs": ["--config", "max_width=80"]
+}
