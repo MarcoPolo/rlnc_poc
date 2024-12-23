@@ -1,4 +1,5 @@
 use crate::blocks::{block_to_chunks, chunk_to_scalars, Committer};
+use crate::matrix::Eschelon;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::traits::MultiscalarMul;
 use curve25519_dalek::Scalar;
@@ -23,10 +24,23 @@ pub struct Chunk {
     data: Vec<Scalar>,
     coefficients: Vec<u32>,
 }
-// A Node keeps chunks and the full commitments from the source.
+/*
+A Node keeps chunks and the full commitments from the source. It also keeps two matrices
+that help check the linear independence of the chunks and compute the inverse system for
+later decoding. The eschelon matrix is the result of the Gaussian elimination and the
+transform matrix contains the coefficients to transform the original data into the eschelon
+form. Coefficients for random linear combinations are chosen from the u8 type, but the operations
+compound at each hop, thus the coefficients that are broadcast in the network are of u32 type.
+There should not be any overflows with less than 24 hops. The eschelon matrix and the transform
+ones are kept as u64 to avoid overflows during the Gaussian elimination. Notice that all these
+operations are done in u64 without any overflows. The final inversion is done in the Ristretto scalar
+field. These auxiliary matrices are kept to avoid performing operations on the actual chunks and
+dealing with scalar modular operations except when decoding or sending new messages.
+*/
 pub struct Node<'a> {
-    chunks: Vec<Chunk>,
+    chunks: Vec<Vec<Scalar>>,
     commitments: Vec<RistrettoPoint>,
+    eschelon: Eschelon,
     committer: &'a Committer,
 }
 
@@ -57,10 +71,11 @@ impl Message {
 }
 
 impl<'a> Node<'a> {
-    pub fn new(committer: &'a Committer) -> Self {
+    pub fn new(committer: &'a Committer, num_chunks: usize) -> Self {
         Node {
             chunks: Vec::new(),
             commitments: Vec::new(),
+            eschelon: Eschelon::new(num_chunks),
             committer: committer,
         }
     }
@@ -72,23 +87,16 @@ impl<'a> Node<'a> {
     ) -> Result<Self, String> {
         let chunks: Vec<_> = block_to_chunks(block, num_chunks)?
             .into_iter()
-            .enumerate()
-            .map(|(i, data)| {
-                let mut coeffs = vec![0u32; num_chunks];
-                coeffs[i] = 1;
-                Chunk {
-                    data: chunk_to_scalars(data).unwrap(),
-                    coefficients: coeffs,
-                }
-            })
+            .map(|data| chunk_to_scalars(data).unwrap())
             .collect();
         let commitments = chunks
             .iter()
-            .map(|chunk| committer.commit(&chunk.data).unwrap())
+            .map(|chunk| committer.commit(&chunk).unwrap())
             .collect();
         Ok(Node {
             chunks,
             commitments,
+            eschelon: Eschelon::new_identity(num_chunks),
             committer,
         })
     }
@@ -112,7 +120,7 @@ impl<'a> Node<'a> {
 
     fn check_existing_chunks(&self, chunk: &Chunk) -> Result<(), String> {
         if !self.chunks.is_empty() {
-            if self.chunks[0].data.len() != chunk.data.len() {
+            if self.chunks[0].len() != chunk.data.len() {
                 return Err("The chunk size is different".to_string());
             }
         }
@@ -126,26 +134,12 @@ impl<'a> Node<'a> {
         message.verify(&self.committer)?;
 
         // TODO: verify linear independence here
-        self.chunks.push(message.chunk);
+        self.chunks.push(message.chunk.data);
+        self.eschelon.add_row(message.chunk.coefficients);
         if self.commitments.is_empty() {
             self.commitments = message.commitments;
         }
         Ok(())
-    }
-
-    // compound_scalars performs a matrix multiplications. The node coefficients are kept as u32
-    // while the chosen scalars are u8, we are under the assumption that there are less than 24 hops
-    // and thus this operation will not overflow.
-    fn compound_scalars(&self, scalars: &[u8]) -> Vec<u32> {
-        (0..scalars.len())
-            .map(|j| {
-                scalars
-                    .iter()
-                    .zip(self.chunks.iter())
-                    .map(|(x, chunk)| *x as u32 * chunk.coefficients[j])
-                    .sum()
-            })
-            .collect()
     }
 
     pub fn send(&self) -> Result<Message, String> {
@@ -165,24 +159,24 @@ impl<'a> Node<'a> {
     }
 
     fn linear_comb_chunk(&self, scalars: &[u8]) -> Chunk {
-        let coefficients = self.compound_scalars(scalars);
+        let coefficients = self.eschelon.compound_scalars(scalars);
         let data = self.linear_comb_data(scalars);
         Chunk { data, coefficients }
     }
 
     fn linear_comb_data(&self, scalars: &[u8]) -> Vec<Scalar> {
-        (0..self.chunks[0].data.len())
+        (0..self.chunks[0].len())
             .map(|i| {
                 scalars
                     .iter()
                     .zip(&self.chunks)
-                    .map(|(&x, chunk)| Scalar::from(x) * chunk.data[i])
+                    .map(|(&x, chunk)| Scalar::from(x) * chunk[i])
                     .sum()
             })
             .collect()
     }
 
-    pub fn chunks(&self) -> &Vec<Chunk> {
+    pub fn chunks(&self) -> &Vec<Vec<Scalar>> {
         &self.chunks
     }
 
@@ -222,7 +216,7 @@ mod tests {
         let source_node =
             Node::new_source(&committer, &block, num_chunks).unwrap();
         let message = source_node.send().unwrap();
-        let mut destination_node = Node::new(&committer);
+        let mut destination_node = Node::new(&committer, num_chunks);
         destination_node.receive(message).unwrap();
         assert_eq!(destination_node.chunks().len(), 1);
         assert_eq!(destination_node.commitments().len(), num_chunks);

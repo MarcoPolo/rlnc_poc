@@ -78,7 +78,7 @@ fn benchmark_send_receive(c: &mut Criterion) {
         rlnc_poc::node::Node::new_source(&committer, &block, num_chunks)
             .unwrap();
     let message = source_node.send().unwrap();
-    let mut destination_node = Node::new(&committer);
+    let mut destination_node = Node::new(&committer, num_chunks);
     c.bench_function("receive small block", |b| {
         b.iter(|| {
             let cloned_message = message.clone();
@@ -93,7 +93,7 @@ fn benchmark_send_receive(c: &mut Criterion) {
     )
     .unwrap();
     let message = source_node.send().unwrap();
-    let mut destination_node = Node::new(&committer);
+    let mut destination_node = Node::new(&committer, num_chunks);
     c.bench_function("receive large block", |b| {
         b.iter(|| {
             let cloned_message = message.clone();
