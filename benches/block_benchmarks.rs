@@ -2,7 +2,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rlnc_poc::blocks::{
     block_to_chunks, chunk_to_scalars, random_u8_slice, Committer,
 };
-use rlnc_poc::node::Node;
+use rlnc_poc::node::{Message, Node};
 
 fn benchmark_commit(c: &mut Criterion) {
     let chunk_size = 1;
@@ -147,10 +147,60 @@ fn benchmark_decode(c: &mut Criterion) {
     });
 }
 
+fn benchmark_receive_and_decode(c: &mut Criterion) {
+    let chunk_size = 1;
+    let num_chunks = 10;
+    let block_size = chunk_size * num_chunks * 32;
+    let block: Vec<u8> = random_u8_slice(block_size);
+    let committer = Committer::new(chunk_size);
+    let source_node =
+        rlnc_poc::node::Node::new_source(&committer, &block, num_chunks)
+            .unwrap();
+    let mut messages: Vec<Message> = Vec::with_capacity(num_chunks);
+    let mut destination_node = Node::new(&committer, num_chunks);
+    for _ in 0..num_chunks {
+        messages.push(source_node.send().unwrap());
+    }
+    c.bench_function("decode and receive small block", |b| {
+        b.iter(|| {
+            for i in &messages {
+                destination_node.receive(i.clone()).unwrap();
+            }
+            black_box(destination_node.decode().unwrap());
+        })
+    });
+
+    let large_chunk_size = 380;
+    let large_num_chunks = 10;
+    let large_block_size = large_chunk_size * large_num_chunks * 32;
+    let large_block: Vec<u8> = random_u8_slice(large_block_size);
+    let committer = Committer::new(large_chunk_size);
+    let source_node = rlnc_poc::node::Node::new_source(
+        &committer,
+        &large_block,
+        large_num_chunks,
+    )
+    .unwrap();
+    destination_node = Node::new(&committer, large_num_chunks);
+    let mut messages: Vec<Message> = Vec::with_capacity(large_num_chunks);
+    for _ in 0..large_num_chunks {
+        messages.push(source_node.send().unwrap());
+    }
+    c.bench_function("decode and receive large block", |b| {
+        b.iter(|| {
+            for i in &messages {
+                destination_node.receive(i.clone()).unwrap();
+            }
+            black_box(destination_node.decode().unwrap());
+        })
+    });
+}
+
 criterion_group!(
     benches,
     benchmark_commit,
     benchmark_send_receive,
-    benchmark_decode
+    benchmark_decode,
+    benchmark_receive_and_decode,
 );
 criterion_main!(benches);

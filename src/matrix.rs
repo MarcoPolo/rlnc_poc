@@ -10,17 +10,21 @@ thus the matrix before importing this message has a block structure
 [ 0 | I ]
 where A is the transformation matrix for the first i-1 messages and I is the identity
 for the rest of the rows.
+
+We could in principle work with smaller integer matrices like u64 instead of Scalar, but care
+needs to be taken to prevent the integers to grow with the number of rows. Implementing something
+like Bareiss' seems overkill at this stage.
 */
 pub struct Eschelon {
     coefficients: Vec<Vec<u32>>,
-    eschelon: Vec<Vec<i64>>,
-    transform: Vec<Vec<i64>>,
+    eschelon: Vec<Vec<Scalar>>,
+    transform: Vec<Vec<Scalar>>,
 }
 
 impl Eschelon {
     pub fn new(size: usize) -> Self {
-        let mut transform = vec![vec![0; size]; size];
-        (0..size).for_each(|i| transform[i][i] = 1);
+        let mut transform = vec![vec![Scalar::ZERO; size]; size];
+        (0..size).for_each(|i| transform[i][i] = Scalar::ONE);
 
         Eschelon {
             coefficients: Vec::new(),
@@ -30,8 +34,8 @@ impl Eschelon {
     }
 
     pub fn new_identity(size: usize) -> Self {
-        let mut eschelon = vec![vec![0; size]; size];
-        (0..size).for_each(|i| eschelon[i][i] = 1);
+        let mut eschelon = vec![vec![Scalar::ZERO; size]; size];
+        (0..size).for_each(|i| eschelon[i][i] = Scalar::ONE);
         let transform = eschelon.clone();
         let mut coefficients = vec![vec![0; size]; size];
         (0..size).for_each(|i| coefficients[i][i] = 1);
@@ -54,15 +58,16 @@ impl Eschelon {
             return false;
         }
         if current_size == 0 {
-            self.eschelon.push(row.iter().map(|x| *x as i64).collect());
+            self.eschelon
+                .push(row.iter().map(|x| Scalar::from(*x)).collect());
             self.coefficients.push(row);
             return true;
         }
         let mut tr = self.transform[current_size].clone();
         let mut i = 0;
         let mut j: usize;
-        let mut new_eschelon_row: Vec<i64> =
-            row.iter().map(|x| *x as i64).collect();
+        let mut new_eschelon_row: Vec<Scalar> =
+            row.iter().map(|x| Scalar::from(*x)).collect();
         while i < current_size {
             j = first_entry(&self.eschelon[i]).unwrap();
             let k = match first_entry(&new_eschelon_row) {
@@ -87,7 +92,7 @@ impl Eschelon {
                 .for_each(|(x, y)| *x = pivot * (*x) - y * f);
             i += 1;
         }
-        if new_eschelon_row.iter().all(|x| *x == 0) {
+        if new_eschelon_row.iter().all(|x| *x == Scalar::ZERO) {
             return false;
         }
         self.eschelon.insert(i, new_eschelon_row);
@@ -116,13 +121,6 @@ impl Eschelon {
             .collect()
     }
 
-    fn tranform_as_scalars(&self) -> Vec<Vec<Scalar>> {
-        self.transform
-            .iter()
-            .map(|row| row.iter().map(|x| scalar_from_i64(*x)).collect())
-            .collect()
-    }
-
     pub fn inverse(&self) -> Result<Vec<Vec<Scalar>>, String> {
         if self.coefficients.is_empty() {
             return Err("No coefficients to decode".to_string());
@@ -130,12 +128,12 @@ impl Eschelon {
         if self.eschelon.len() != self.coefficients[0].len() {
             return Err("The eschelon form is not square".to_string());
         }
-        let mut inverse = self.tranform_as_scalars();
+        let mut inverse = self.transform.clone();
         for i in (0..self.eschelon.len()).rev() {
-            let pivot = scalar_from_i64(self.eschelon[i][i]).invert();
+            let pivot = self.eschelon[i][i].invert();
             inverse[i].iter_mut().for_each(|x| *x = *x * pivot);
             for j in (i + 1)..self.eschelon.len() {
-                let diff = scalar_from_i64(self.eschelon[i][j]) * pivot;
+                let diff = self.eschelon[i][j] * pivot;
                 for k in 0..self.eschelon.len() {
                     let actual_diff = inverse[j][k] * diff;
                     inverse[i][k] -= actual_diff;
@@ -149,14 +147,6 @@ impl Eschelon {
 fn first_entry<T: PartialEq + Default>(slice: &[T]) -> Option<usize> {
     let zero = T::default();
     slice.iter().position(|x| x != &zero)
-}
-
-fn scalar_from_i64(x: i64) -> Scalar {
-    if x > 0 {
-        Scalar::from(x as u64)
-    } else {
-        -Scalar::from(-x as u64)
-    }
 }
 
 #[cfg(test)]

@@ -25,17 +25,8 @@ pub struct Chunk {
     coefficients: Vec<u32>,
 }
 /*
-A Node keeps chunks and the full commitments from the source. It also keeps two matrices
-that help check the linear independence of the chunks and compute the inverse system for
-later decoding. The eschelon matrix is the result of the Gaussian elimination and the
-transform matrix contains the coefficients to transform the original data into the eschelon
-form. Coefficients for random linear combinations are chosen from the u8 type, but the operations
-compound at each hop, thus the coefficients that are broadcast in the network are of u32 type.
-There should not be any overflows with less than 24 hops. The eschelon matrix and the transform
-ones are kept as u64 to avoid overflows during the Gaussian elimination. Notice that all these
-operations are done in u64 without any overflows. The final inversion is done in the Ristretto scalar
-field. These auxiliary matrices are kept to avoid performing operations on the actual chunks and
-dealing with scalar modular operations except when decoding or sending new messages.
+A Node keeps chunks and the full commitments from the source. The Eschelon object is used to keep
+track of the linear independence of the chunks.
 */
 pub struct Node<'a> {
     chunks: Vec<Vec<Scalar>>,
