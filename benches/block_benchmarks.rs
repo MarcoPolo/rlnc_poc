@@ -93,7 +93,7 @@ fn benchmark_send_receive(c: &mut Criterion) {
     )
     .unwrap();
     let message = source_node.send().unwrap();
-    let mut destination_node = Node::new(&committer, num_chunks);
+    let mut destination_node = Node::new(&committer, large_num_chunks);
     c.bench_function("receive large block", |b| {
         b.iter(|| {
             let cloned_message = message.clone();
@@ -102,5 +102,55 @@ fn benchmark_send_receive(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, benchmark_commit, benchmark_send_receive);
+fn benchmark_decode(c: &mut Criterion) {
+    let chunk_size = 1;
+    let num_chunks = 10;
+    let block_size = chunk_size * num_chunks * 32;
+    let block: Vec<u8> = random_u8_slice(block_size);
+    let committer = Committer::new(chunk_size);
+    let source_node =
+        rlnc_poc::node::Node::new_source(&committer, &block, num_chunks)
+            .unwrap();
+    let mut destination_node = Node::new(&committer, num_chunks);
+    for _ in 0..num_chunks {
+        destination_node
+            .receive(source_node.send().unwrap())
+            .unwrap();
+    }
+    c.bench_function("decode small block", |b| {
+        b.iter(|| {
+            black_box(destination_node.decode().unwrap());
+        })
+    });
+
+    let large_chunk_size = 380;
+    let large_num_chunks = 10;
+    let large_block_size = large_chunk_size * large_num_chunks * 32;
+    let large_block: Vec<u8> = random_u8_slice(large_block_size);
+    let committer = Committer::new(large_chunk_size);
+    let source_node = rlnc_poc::node::Node::new_source(
+        &committer,
+        &large_block,
+        large_num_chunks,
+    )
+    .unwrap();
+    destination_node = Node::new(&committer, large_num_chunks);
+    for _ in 0..large_num_chunks {
+        destination_node
+            .receive(source_node.send().unwrap())
+            .unwrap();
+    }
+    c.bench_function("decode large block", |b| {
+        b.iter(|| {
+            black_box(destination_node.decode().unwrap());
+        })
+    });
+}
+
+criterion_group!(
+    benches,
+    benchmark_commit,
+    benchmark_send_receive,
+    benchmark_decode
+);
 criterion_main!(benches);

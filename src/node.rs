@@ -134,8 +134,10 @@ impl<'a> Node<'a> {
         message.verify(&self.committer)?;
 
         // TODO: verify linear independence here
+        if !self.eschelon.add_row(message.chunk.coefficients) {
+            return Ok(());
+        }
         self.chunks.push(message.chunk.data);
-        self.eschelon.add_row(message.chunk.coefficients);
         if self.commitments.is_empty() {
             self.commitments = message.commitments;
         }
@@ -174,6 +176,24 @@ impl<'a> Node<'a> {
                     .sum()
             })
             .collect()
+    }
+
+    pub fn decode(&self) -> Result<Vec<u8>, String> {
+        let inverse = self.eschelon.inverse()?;
+        let mut ret = Vec::with_capacity(
+            self.commitments.len() * self.chunks[0].len() * 32,
+        );
+        for i in 0..inverse.len() {
+            for k in 0..self.chunks[0].len() {
+                ret.extend_from_slice(
+                    &(0..inverse.len())
+                        .map(|j| inverse[i][j] * self.chunks[j][k])
+                        .sum::<Scalar>()
+                        .to_bytes(),
+                )
+            }
+        }
+        Ok(ret)
     }
 
     pub fn chunks(&self) -> &Vec<Vec<Scalar>> {
@@ -220,5 +240,25 @@ mod tests {
         destination_node.receive(message).unwrap();
         assert_eq!(destination_node.chunks().len(), 1);
         assert_eq!(destination_node.commitments().len(), num_chunks);
+    }
+
+    #[test]
+    fn test_decode() {
+        let num_chunks = 3;
+        let chunk_size = 4;
+        let committer = Committer::new(chunk_size);
+        let block = random_u8_slice(num_chunks * chunk_size * 32);
+        let source_node =
+            Node::new_source(&committer, &block, num_chunks).unwrap();
+        let message1 = source_node.send().unwrap();
+        let message2 = source_node.send().unwrap();
+        let message3 = source_node.send().unwrap();
+        let mut destination_node = Node::new(&committer, num_chunks);
+        destination_node.receive(message1).unwrap();
+        destination_node.receive(message2).unwrap();
+        destination_node.receive(message3).unwrap();
+        let decoded = destination_node.decode().unwrap();
+        assert_eq!(decoded.len(), block.len());
+        assert_eq!(decoded, block);
     }
 }

@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 curve25519-dalek = "4.0.0"
 rand = "0.8"
+num = "0.4" 
 
 [dev-dependencies]
 criterion = "0.4"

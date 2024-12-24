@@ -59,7 +59,11 @@ pub fn chunk_to_scalars(chunk: &[u8]) -> Result<Vec<Scalar>, String> {
 // random_u8_slice returns a vector of random u32 numbers of the given length.
 pub fn random_u8_slice(length: usize) -> Vec<u8> {
     let mut rng = rand::thread_rng();
-    (0..length).map(|_| rng.gen()).collect()
+    let mut ret: Vec<u8> = (0..length).map(|_| rng.gen()).collect();
+    for i in (31..length).step_by(32) {
+        ret[i] = 0;
+    }
+    ret
 }
 
 pub fn block_to_chunks(
