@@ -13,3 +13,7 @@ criterion = "0.4"
 [[bench]]
 name = "block_benchmarks"
 harness = false
+
+[[bin]]
+name = "random_topology"
+path = "src/bin/random_topology_rlnc.rs"

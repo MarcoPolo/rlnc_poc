@@ -15,14 +15,11 @@ pub struct Message {
     chunk: Chunk,
     commitments: Vec<RistrettoPoint>,
 }
-// A Chunk contains the transmitted data. Coefficients are chosen to be u8,
-// but since we perform operations in the Ristretto group we have to deal
-// With larger integer type. Using u32 we are safe to up to 24 network hops
-// Without overflowing.
+// A Chunk contains the transmitted data. Coefficients are also in the Ristretto group
 #[derive(Clone)]
 pub struct Chunk {
     data: Vec<Scalar>,
-    coefficients: Vec<u32>,
+    coefficients: Vec<Scalar>,
 }
 /*
 A Node keeps chunks and the full commitments from the source. The Eschelon object is used to keep
@@ -33,6 +30,14 @@ pub struct Node<'a> {
     commitments: Vec<RistrettoPoint>,
     eschelon: Eschelon,
     committer: &'a Committer,
+}
+
+#[derive(Debug)]
+pub enum ReceiveError {
+    ExistingCommitmentsMismatch(String),
+    ExistingChunksMismatch(String),
+    InvalidMessage(String),
+    LinearlyDependentChunk,
 }
 
 impl Message {
@@ -58,6 +63,10 @@ impl Message {
             return Err("The commitment does not match".to_string());
         }
         Ok(())
+    }
+
+    pub fn coefficients(&self) -> &Vec<Scalar> {
+        &self.chunk.coefficients
     }
 }
 
@@ -118,16 +127,23 @@ impl<'a> Node<'a> {
         Ok(())
     }
 
-    pub fn receive(&mut self, message: Message) -> Result<(), String> {
+    pub fn receive(&mut self, message: Message) -> Result<(), ReceiveError> {
         // If we have already committments we check that they are the same
-        self.check_existing_commitments(&message.commitments)?;
-        self.check_existing_chunks(&message.chunk)?;
-        message.verify(&self.committer)?;
+        self.check_existing_commitments(&message.commitments)
+            .map_err(ReceiveError::ExistingCommitmentsMismatch)?;
 
-        // TODO: verify linear independence here
+        self.check_existing_chunks(&message.chunk)
+            .map_err(ReceiveError::ExistingChunksMismatch)?;
+
+        message
+            .verify(&self.committer)
+            .map_err(ReceiveError::InvalidMessage)?;
+
+        // Verify linear independence
         if !self.eschelon.add_row(message.chunk.coefficients) {
-            return Ok(());
+            return Err(ReceiveError::LinearlyDependentChunk);
         }
+
         self.chunks.push(message.chunk.data);
         if self.commitments.is_empty() {
             self.commitments = message.commitments;
@@ -143,10 +159,6 @@ impl<'a> Node<'a> {
         let chunk = self.linear_comb_chunk(&scalars);
 
         let message = Message::new(chunk, self.commitments.clone());
-        debug_assert_eq!(
-            message.chunk.coefficients.len(),
-            message.commitments.len()
-        );
         debug_assert!(message.verify(&self.committer).is_ok());
         Ok(message)
     }
@@ -194,6 +206,10 @@ impl<'a> Node<'a> {
     pub fn commitments(&self) -> &Vec<RistrettoPoint> {
         &self.commitments
     }
+
+    pub fn is_full(&self) -> bool {
+        self.eschelon.is_full()
+    }
 }
 
 fn generate_random_coeffs(length: usize) -> Vec<u8> {
@@ -204,7 +220,7 @@ fn generate_random_coeffs(length: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use crate::blocks::{random_u8_slice, Committer};
-    use crate::node::Node;
+    use crate::node::{Node, ReceiveError};
 
     #[test]
     fn test_source_node() {
@@ -228,9 +244,17 @@ mod tests {
             Node::new_source(&committer, &block, num_chunks).unwrap();
         let message = source_node.send().unwrap();
         let mut destination_node = Node::new(&committer, num_chunks);
-        destination_node.receive(message).unwrap();
+        destination_node
+            .receive(message)
+            .or_else(|e| match e {
+                ReceiveError::LinearlyDependentChunk => Ok(()),
+                _ => Err(e),
+            })
+            .unwrap();
         assert_eq!(destination_node.chunks().len(), 1);
         assert_eq!(destination_node.commitments().len(), num_chunks);
+
+        destination_node.send().unwrap();
     }
 
     #[test]
@@ -245,9 +269,27 @@ mod tests {
         let message2 = source_node.send().unwrap();
         let message3 = source_node.send().unwrap();
         let mut destination_node = Node::new(&committer, num_chunks);
-        destination_node.receive(message1).unwrap();
-        destination_node.receive(message2).unwrap();
-        destination_node.receive(message3).unwrap();
+        destination_node
+            .receive(message1)
+            .or_else(|e| match e {
+                ReceiveError::LinearlyDependentChunk => Ok(()),
+                _ => Err(e),
+            })
+            .unwrap();
+        destination_node
+            .receive(message2)
+            .or_else(|e| match e {
+                ReceiveError::LinearlyDependentChunk => Ok(()),
+                _ => Err(e),
+            })
+            .unwrap();
+        destination_node
+            .receive(message3)
+            .or_else(|e| match e {
+                ReceiveError::LinearlyDependentChunk => Ok(()),
+                _ => Err(e),
+            })
+            .unwrap();
         let decoded = destination_node.decode().unwrap();
         assert_eq!(decoded.len(), block.len());
         assert_eq!(decoded, block);

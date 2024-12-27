@@ -16,7 +16,7 @@ needs to be taken to prevent the integers to grow with the number of rows. Imple
 like Bareiss' seems overkill at this stage.
 */
 pub struct Eschelon {
-    coefficients: Vec<Vec<u32>>,
+    coefficients: Vec<Vec<Scalar>>,
     eschelon: Vec<Vec<Scalar>>,
     transform: Vec<Vec<Scalar>>,
 }
@@ -37,8 +37,7 @@ impl Eschelon {
         let mut eschelon = vec![vec![Scalar::ZERO; size]; size];
         (0..size).for_each(|i| eschelon[i][i] = Scalar::ONE);
         let transform = eschelon.clone();
-        let mut coefficients = vec![vec![0; size]; size];
-        (0..size).for_each(|i| coefficients[i][i] = 1);
+        let coefficients = eschelon.clone();
 
         Eschelon {
             coefficients,
@@ -47,10 +46,15 @@ impl Eschelon {
         }
     }
 
+    // is_full returns if the eschelon form is square.
+    pub fn is_full(&self) -> bool {
+        self.coefficients.len() == self.coefficients[0].len()
+    }
+
     // add_row adds a row to the coefficients matrix and updates the eschelon form and the transform.
     // It returns false if the row is linearly dependent with the previous ones.
-    pub fn add_row(&mut self, row: Vec<u32>) -> bool {
-        if row.iter().all(|x| *x == 0) {
+    pub fn add_row(&mut self, row: Vec<Scalar>) -> bool {
+        if row.iter().all(|x| *x == Scalar::ZERO) {
             return false;
         }
         let current_size = self.coefficients.len();
@@ -109,13 +113,13 @@ impl Eschelon {
     // compound_scalars performs a matrix multiplications. The node coefficients are kept as u32
     // while the chosen scalars are u8, we are under the assumption that there are less than 24 hops
     // and thus this operation will not overflow.
-    pub fn compound_scalars(&self, scalars: &[u8]) -> Vec<u32> {
-        (0..scalars.len())
+    pub fn compound_scalars(&self, scalars: &[u8]) -> Vec<Scalar> {
+        (0..self.transform.len())
             .map(|j| {
                 scalars
                     .iter()
                     .zip(self.coefficients.iter())
-                    .map(|(x, coeffs)| *x as u32 * coeffs[j])
+                    .map(|(x, coeffs)| Scalar::from(*x) * coeffs[j])
                     .sum()
             })
             .collect()
@@ -157,44 +161,185 @@ mod tests {
     #[test]
     fn test_add_row() {
         let mut eschelon = Eschelon::new(3);
-        assert_eq!(eschelon.add_row(vec![0, 0, 0]), false);
-        assert_eq!(eschelon.add_row(vec![0, 0, 1]), true);
-        assert_eq!(eschelon.add_row(vec![0, 0, 1]), false);
-        assert_eq!(eschelon.add_row(vec![0, 1, 0]), true);
-        assert_eq!(eschelon.add_row(vec![0, 1, 0]), false);
-        assert_eq!(eschelon.add_row(vec![1, 0, 0]), true);
-        assert_eq!(eschelon.add_row(vec![1, 0, 0]), false);
-        assert_eq!(eschelon.add_row(vec![1, 1, 1]), false);
-        assert_eq!(eschelon.add_row(vec![0, 1, 1]), false);
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(0u32),
+                Scalar::from(0u32),
+                Scalar::from(0u32)
+            ]),
+            false
+        );
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(0u32),
+                Scalar::from(0u32),
+                Scalar::from(1u32)
+            ]),
+            true
+        );
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(0u32),
+                Scalar::from(0u32),
+                Scalar::from(1u32)
+            ]),
+            false
+        );
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(0u32),
+                Scalar::from(1u32),
+                Scalar::from(0u32)
+            ]),
+            true
+        );
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(0u32),
+                Scalar::from(1u32),
+                Scalar::from(0u32)
+            ]),
+            false
+        );
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(1u32),
+                Scalar::from(0u32),
+                Scalar::from(0u32)
+            ]),
+            true
+        );
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(1u32),
+                Scalar::from(0u32),
+                Scalar::from(0u32)
+            ]),
+            false
+        );
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(1u32),
+                Scalar::from(1u32),
+                Scalar::from(1u32)
+            ]),
+            false
+        );
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(0u32),
+                Scalar::from(1u32),
+                Scalar::from(1u32)
+            ]),
+            false
+        );
         eschelon = Eschelon::new(3);
-        assert_eq!(eschelon.add_row(vec![0, 1, 0]), true);
-        assert_eq!(eschelon.add_row(vec![0, 2, 3]), true);
-        assert_eq!(eschelon.add_row(vec![5, 0, 1]), true);
-        assert_eq!(eschelon.add_row(vec![2, 0, 1]), false);
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(0u32),
+                Scalar::from(1u32),
+                Scalar::from(0u32)
+            ]),
+            true
+        );
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(0u32),
+                Scalar::from(2u32),
+                Scalar::from(3u32)
+            ]),
+            true
+        );
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(5u32),
+                Scalar::from(0u32),
+                Scalar::from(1u32)
+            ]),
+            true
+        );
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(2u32),
+                Scalar::from(0u32),
+                Scalar::from(1u32)
+            ]),
+            false
+        );
         eschelon = Eschelon::new(3);
-        assert_eq!(eschelon.add_row(vec![2, 1, 0]), true);
-        assert_eq!(eschelon.add_row(vec![3, 2, 1]), true);
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(2u32),
+                Scalar::from(1u32),
+                Scalar::from(0u32)
+            ]),
+            true
+        );
+        assert_eq!(
+            eschelon.add_row(vec![
+                Scalar::from(3u32),
+                Scalar::from(2u32),
+                Scalar::from(1u32)
+            ]),
+            true
+        );
     }
 
     #[test]
     fn test_inverse() {
         let mut eschelon = Eschelon::new(3);
         assert_eq!(eschelon.inverse().is_err(), true);
-        eschelon.add_row(vec![1, 0, 0]);
-        eschelon.add_row(vec![0, 1, 0]);
-        eschelon.add_row(vec![0, 0, 1]);
+        eschelon.add_row(vec![
+            Scalar::from(1u32),
+            Scalar::from(0u32),
+            Scalar::from(0u32),
+        ]);
+        eschelon.add_row(vec![
+            Scalar::from(0u32),
+            Scalar::from(1u32),
+            Scalar::from(0u32),
+        ]);
+        eschelon.add_row(vec![
+            Scalar::from(0u32),
+            Scalar::from(0u32),
+            Scalar::from(1u32),
+        ]);
         let inverse = eschelon.inverse().unwrap();
         assert_eq!(inverse[0][0], Scalar::from(1u32));
         assert_eq!(inverse[0][1], Scalar::from(0u32));
 
         eschelon = Eschelon::new(2);
         assert_eq!(eschelon.inverse().is_err(), true);
-        eschelon.add_row(vec![2, 5]);
-        eschelon.add_row(vec![1, 3]);
+        eschelon.add_row(vec![Scalar::from(2u32), Scalar::from(5u32)]);
+        eschelon.add_row(vec![Scalar::from(1u32), Scalar::from(3u32)]);
         let inverse = eschelon.inverse().unwrap();
         assert_eq!(inverse[0][0], Scalar::from(3u32));
         assert_eq!(inverse[0][1], -Scalar::from(5u32));
         assert_eq!(inverse[1][0], -Scalar::from(1u32));
         assert_eq!(inverse[1][1], Scalar::from(2u32));
+    }
+
+    #[test]
+    fn test_compound_scalars() {
+        let eschelon = Eschelon::new(3);
+        assert_eq!(
+            eschelon.compound_scalars(&[1, 2, 3]),
+            vec![Scalar::from(0u32), Scalar::from(0u32), Scalar::from(0u32)]
+        );
+        let mut eschelon = Eschelon::new(3);
+        eschelon.add_row(vec![
+            Scalar::from(2u32),
+            Scalar::from(0u32),
+            Scalar::from(0u32),
+        ]);
+        eschelon.add_row(vec![
+            Scalar::from(0u32),
+            Scalar::from(3u32),
+            Scalar::from(1u32),
+        ]);
+        assert_eq!(
+            eschelon.compound_scalars(&[3, 5]),
+            vec![Scalar::from(6u32), Scalar::from(15u32), Scalar::from(5u32)]
+        );
     }
 }
