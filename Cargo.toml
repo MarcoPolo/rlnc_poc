@@ -17,3 +17,7 @@ harness = false
 [[bin]]
 name = "random_topology"
 path = "src/bin/random_topology_rlnc.rs"
+
+[[bin]]
+name = "routing"
+path = "src/bin/routing.rs"
