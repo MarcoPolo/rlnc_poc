@@ -8,6 +8,7 @@ fn main() {
 struct SimulationNode<'a> {
     node: Node<'a>,
     neighbors: Vec<usize>,
+    sent_message: bool,
 }
 struct Network<'a> {
     nodes: Vec<SimulationNode<'a>>,
@@ -23,6 +24,7 @@ impl<'a> SimulationNode<'a> {
         SimulationNode {
             node: Node::<'a>::new(&committer, num_chunks),
             neighbors: Vec::new(),
+            sent_message: false,
         }
     }
 
@@ -35,6 +37,7 @@ impl<'a> SimulationNode<'a> {
         Ok(SimulationNode {
             node,
             neighbors: Vec::new(),
+            sent_message: false,
         })
     }
 }
@@ -89,18 +92,17 @@ impl<'a> Network<'a> {
         self.timestamp += 1;
         self.round_messages.clear();
         self.round_destinations.clear();
-        println!(
-            "Timestamp: {}, Full nodes: {}, Wasted Bandwidth: {}",
-            self.timestamp, self.full_nodes, self.wasted_bandwdidth
-        );
-
         for i in 0..self.nodes.len() {
-            let source = &self.nodes[i];
+            let source = &mut self.nodes[i];
+            if source.sent_message {
+                continue;
+            }
             for &j in source.neighbors.iter() {
                 if j == i {
                     continue;
                 }
                 if let Ok(message) = source.node.send() {
+                    source.sent_message = true;
                     self.round_messages.push(message);
                     self.round_destinations.push(j);
                 }
@@ -134,11 +136,15 @@ impl<'a> Network<'a> {
 
 fn run_simulation() {
     let num_nodes = 10000; // Similar to Ethereum mainnet
-    let chunk_size = 20; // Block size is 6.25KB (20 * 10 * 32)
+    let chunk_size = 1;
     let committer = Committer::new(chunk_size);
-    let mesh_size = 6;
+    let mesh_size = 60;
     let mut network = Network::new(&committer, num_nodes, mesh_size);
-    while !network.all_nodes_full() {
+    while !network.all_nodes_full() && network.timestamp < 100 {
         network.round();
+        println!(
+            "Timestamp: {}, Full nodes: {}, Wasted Bandwidth: {}",
+            network.timestamp, network.full_nodes, network.wasted_bandwdidth
+        );
     }
 }

@@ -44,11 +44,6 @@ impl Network {
     pub fn round(&mut self) {
         self.timestamp += 10;
         let mut round_destinations: Vec<usize> = Vec::new();
-        println!(
-            "Timestamp: {}, Full nodes: {}, Wasted Bandwidth: {}",
-            self.timestamp, self.full_nodes, self.wasted_bandwdidth
-        );
-
         for i in 0..self.nodes.len() {
             let source = &self.nodes[i];
             if !source.full {
@@ -67,6 +62,7 @@ impl Network {
         }
         for j in round_destinations {
             if self.nodes[j].full {
+                self.wasted_bandwdidth += 10;
                 continue;
             }
             self.nodes[j].full = true;
@@ -81,9 +77,14 @@ impl Network {
 
 fn run_simulation() {
     let num_nodes = 10000; // Similar to Ethereum mainnet
-    let mesh_size = 6;
+    let mesh_size = 8;
     let mut network = Network::new(num_nodes, mesh_size);
-    while network.full_nodes() < num_nodes * 99 / 100 {
+    while network.full_nodes() < num_nodes * 99 / 100 && network.timestamp < 100
+    {
         network.round();
+        println!(
+            "Timestamp: {}, Full nodes: {}, Wasted Bandwidth: {}",
+            network.timestamp, network.full_nodes, network.wasted_bandwdidth
+        );
     }
 }
