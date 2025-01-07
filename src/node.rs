@@ -1,5 +1,5 @@
 use crate::blocks::{block_to_chunks, chunk_to_scalars, Committer};
-use crate::matrix::Eschelon;
+use crate::matrix::Echelon;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::traits::MultiscalarMul;
 use curve25519_dalek::Scalar;
@@ -22,13 +22,13 @@ pub struct Chunk {
     coefficients: Vec<Scalar>,
 }
 /*
-A Node keeps chunks and the full commitments from the source. The Eschelon object is used to keep
+A Node keeps chunks and the full commitments from the source. The Echelon object is used to keep
 track of the linear independence of the chunks.
 */
 pub struct Node<'a> {
     chunks: Vec<Vec<Scalar>>,
     commitments: Vec<RistrettoPoint>,
-    eschelon: Eschelon,
+    echelon: Echelon,
     committer: &'a Committer,
 }
 
@@ -75,7 +75,7 @@ impl<'a> Node<'a> {
         Node {
             chunks: Vec::new(),
             commitments: Vec::new(),
-            eschelon: Eschelon::new(num_chunks),
+            echelon: Echelon::new(num_chunks),
             committer: committer,
         }
     }
@@ -96,7 +96,7 @@ impl<'a> Node<'a> {
         Ok(Node {
             chunks,
             commitments,
-            eschelon: Eschelon::new_identity(num_chunks),
+            echelon: Echelon::new_identity(num_chunks),
             committer,
         })
     }
@@ -140,7 +140,7 @@ impl<'a> Node<'a> {
             .map_err(ReceiveError::InvalidMessage)?;
 
         // Verify linear independence
-        if !self.eschelon.add_row(message.chunk.coefficients) {
+        if !self.echelon.add_row(message.chunk.coefficients) {
             return Err(ReceiveError::LinearlyDependentChunk);
         }
 
@@ -164,7 +164,7 @@ impl<'a> Node<'a> {
     }
 
     fn linear_comb_chunk(&self, scalars: &[u8]) -> Chunk {
-        let coefficients = self.eschelon.compound_scalars(scalars);
+        let coefficients = self.echelon.compound_scalars(scalars);
         let data = self.linear_comb_data(scalars);
         Chunk { data, coefficients }
     }
@@ -182,7 +182,7 @@ impl<'a> Node<'a> {
     }
 
     pub fn decode(&self) -> Result<Vec<u8>, String> {
-        let inverse = self.eschelon.inverse()?;
+        let inverse = self.echelon.inverse()?;
         let mut ret = Vec::with_capacity(
             self.commitments.len() * self.chunks[0].len() * 32,
         );
@@ -208,7 +208,7 @@ impl<'a> Node<'a> {
     }
 
     pub fn is_full(&self) -> bool {
-        self.eschelon.is_full()
+        self.echelon.is_full()
     }
 }
 

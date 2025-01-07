@@ -94,9 +94,6 @@ impl<'a> Network<'a> {
         self.round_destinations.clear();
         for i in 0..self.nodes.len() {
             let source = &mut self.nodes[i];
-            if source.sent_message {
-                continue;
-            }
             for &j in source.neighbors.iter() {
                 if j == i {
                     continue;
@@ -138,7 +135,7 @@ fn run_simulation() {
     let num_nodes = 10000; // Similar to Ethereum mainnet
     let chunk_size = 1;
     let committer = Committer::new(chunk_size);
-    let mesh_size = 60;
+    let mesh_size = 10;
     let mut network = Network::new(&committer, num_nodes, mesh_size);
     while !network.all_nodes_full() && network.timestamp < 100 {
         network.round();
