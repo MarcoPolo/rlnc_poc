@@ -1,22 +1,26 @@
-use crate::blocks::{block_to_chunks, chunk_to_scalars, Committer};
+use crate::blocks::{
+    block_to_chunks, chunk_to_scalars, scalars_to_chunk, Committer,
+};
 use crate::matrix::Echelon;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::traits::MultiscalarMul;
 use curve25519_dalek::Scalar;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /*
 A Message represents a single chunk that is received by the node.
 In production it will also have the BLS signature, which we are removing
 to meassure the performance of the RLNC encoding.
 */
-#[derive(Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     chunk: Chunk,
     commitments: Vec<RistrettoPoint>,
 }
 // A Chunk contains the transmitted data. Coefficients are also in the Ristretto group
-#[derive(Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chunk {
     data: Vec<Scalar>,
     coefficients: Vec<Scalar>,
@@ -46,11 +50,7 @@ impl Message {
     }
 
     fn coefficients_to_scalars(&self) -> Vec<Scalar> {
-        self.chunk
-            .coefficients
-            .iter()
-            .map(|x| Scalar::from(*x))
-            .collect()
+        self.chunk.coefficients.to_vec()
     }
 
     pub fn verify(&self, committer: &Committer) -> Result<(), String> {
@@ -68,6 +68,13 @@ impl Message {
     pub fn coefficients(&self) -> &Vec<Scalar> {
         &self.chunk.coefficients
     }
+
+    pub fn commitments_hash(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        let serialized = bincode::serialize(&self.commitments).unwrap();
+        hasher.update(&serialized);
+        hasher.finalize().into()
+    }
 }
 
 impl<'a> Node<'a> {
@@ -76,10 +83,9 @@ impl<'a> Node<'a> {
             chunks: Vec::new(),
             commitments: Vec::new(),
             echelon: Echelon::new(num_chunks),
-            committer: committer,
+            committer,
         }
     }
-
     pub fn new_source(
         committer: &'a Committer,
         block: &[u8],
@@ -183,19 +189,25 @@ impl<'a> Node<'a> {
 
     pub fn decode(&self) -> Result<Vec<u8>, String> {
         let inverse = self.echelon.inverse()?;
-        let mut ret = Vec::with_capacity(
+        let mut ret: Vec<u8> = Vec::with_capacity(
             self.commitments.len() * self.chunks[0].len() * 32,
         );
+
         for i in 0..inverse.len() {
+            let mut ret_scalars = Vec::with_capacity(
+                self.commitments.len() * self.chunks[0].len(),
+            );
             for k in 0..self.chunks[0].len() {
-                ret.extend_from_slice(
-                    &(0..inverse.len())
+                ret_scalars.push(
+                    (0..inverse.len())
                         .map(|j| inverse[i][j] * self.chunks[j][k])
-                        .sum::<Scalar>()
-                        .to_bytes(),
-                )
+                        .sum::<Scalar>(),
+                );
             }
+
+            ret.extend_from_slice(&scalars_to_chunk(&ret_scalars)?);
         }
+
         Ok(ret)
     }
 
@@ -219,6 +231,8 @@ fn generate_random_coeffs(length: usize) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use rand::RngCore;
+
     use crate::blocks::{random_u8_slice, Committer};
     use crate::node::{Node, ReceiveError};
 
@@ -232,6 +246,74 @@ mod tests {
             Node::new_source(&committer, &block, num_chunks).unwrap();
         assert_eq!(source_node.chunks().len(), num_chunks);
         assert_eq!(source_node.commitments().len(), num_chunks);
+    }
+
+    #[macro_export]
+    macro_rules! measure_time {
+        ($prefix:expr, $expr:expr) => {{
+            use std::time::Instant;
+            let start = Instant::now();
+            let result = $expr;
+            let duration = start.elapsed();
+            println!("{}: {:?}", $prefix, duration);
+            result
+        }};
+    }
+
+    #[test]
+    fn test_roundtrip() {
+        let num_chunks = 8;
+        // let chunk_size = 16 * 1024;
+        let chunk_size = 2048;
+        let mut block = vec![0; num_chunks * chunk_size];
+        rand::thread_rng().fill_bytes(&mut block);
+        for i in (31..block.len()).step_by(32) {
+            block[i] = 0;
+        }
+        let committer = measure_time!(
+            "gen commiter",
+            // Each scalar represents 252 bits. We add 251 to round up the result, since if we need
+            // 1.1 scalars we need 2.
+            Committer::new((chunk_size * 8 + 251) / 252)
+        );
+        let source_node =
+            Node::new_source(&committer, &block, num_chunks).unwrap();
+        assert_eq!(source_node.chunks().len(), num_chunks);
+        assert_eq!(source_node.commitments().len(), num_chunks);
+
+        let mut destination_node = measure_time!(
+            "build destination node",
+            Node::new(&committer, num_chunks)
+        );
+
+        for _ in 0..num_chunks {
+            let message =
+                measure_time!("gen send chunk", source_node.send().unwrap());
+            measure_time!(
+                "receive chunk",
+                destination_node
+                    .receive(message)
+                    .or_else(|e| match e {
+                        ReceiveError::LinearlyDependentChunk => Ok(()),
+                        _ => Err(e),
+                    })
+                    .unwrap()
+            );
+        }
+
+        assert!(destination_node.is_full());
+
+        let decoded = destination_node.decode().unwrap();
+
+        assert_eq!(decoded.len(), block.len());
+        for i in 0..decoded.len() {
+            assert_eq!(
+                decoded[i], block[i],
+                "Failed to match at idx {} left {} right {}",
+                i, decoded[i], block[i]
+            );
+        }
+        // assert_eq!(decoded, block);
     }
 
     #[test]
@@ -293,5 +375,45 @@ mod tests {
         let decoded = destination_node.decode().unwrap();
         assert_eq!(decoded.len(), block.len());
         assert_eq!(decoded, block);
+    }
+
+    #[test]
+    fn test_message_serialization() {
+        use super::Message;
+        // Setup
+        let num_chunks = 3;
+        let chunk_size = 4;
+        let committer = Committer::new(chunk_size);
+        let block = random_u8_slice(num_chunks * chunk_size * 32);
+
+        // Create a source node and get a message
+        let source_node =
+            Node::new_source(&committer, &block, num_chunks).unwrap();
+        let original_message = source_node.send().unwrap();
+
+        // Serialize to bytes
+        let serialized = bincode::serialize(&original_message).unwrap();
+
+        // Deserialize back
+        let deserialized_message: Message =
+            bincode::deserialize(&serialized).unwrap();
+
+        // Verify the deserialized message
+        assert_eq!(
+            original_message.chunk.data, deserialized_message.chunk.data,
+            "Data vectors don't match"
+        );
+        assert_eq!(
+            original_message.chunk.coefficients,
+            deserialized_message.chunk.coefficients,
+            "Coefficients don't match"
+        );
+        assert_eq!(
+            original_message.commitments, deserialized_message.commitments,
+            "Commitments don't match"
+        );
+
+        // Verify the deserialized message can still be verified
+        assert!(deserialized_message.verify(&committer).is_ok());
     }
 }
